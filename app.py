@@ -15,12 +15,28 @@ def load_model():
     return tf.keras.models.load_model(MODEL_PATH)
 
 
+def fix_orientation(pil_img: Image.Image) -> Image.Image:
+    """Apply EXIF rotation metadata (phone photos are often stored sideways)."""
+    return ImageOps.exif_transpose(pil_img)
+
+
 def preprocess_image(pil_img: Image.Image) -> np.ndarray:
-    """Convert an uploaded image into the (1, 28, 28, 1) float array the model expects."""
-    img = pil_img.convert("L")  # grayscale
-    img = ImageOps.exif_transpose(img)
+    """Convert an uploaded image into the (1, 28, 28, 1) float array the model expects.
+
+    The training data is dark background / bright digit strokes (like MNIST).
+    Photos of pen-on-paper are usually the opposite (light background / dark
+    strokes), which the model was never trained on and causes it to lock onto
+    one class regardless of the actual shape. We auto-detect that case by
+    checking the image border and invert if needed.
+    """
+    img = pil_img.convert("L")  # grayscale (orientation already fixed by caller)
     img = img.resize(IMG_SIZE)
     arr = np.array(img).astype("float32") / 255.0
+
+    border = np.concatenate([arr[0, :], arr[-1, :], arr[:, 0], arr[:, -1]])
+    if border.mean() > 0.5:  # background is light -> invert to match training polarity
+        arr = 1.0 - arr
+
     arr = arr.reshape(1, IMG_SIZE[0], IMG_SIZE[1], 1)
     return arr
 
@@ -38,7 +54,7 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    pil_img = Image.open(uploaded_file)
+    pil_img = fix_orientation(Image.open(uploaded_file))
 
     col1, col2 = st.columns(2)
     with col1:
